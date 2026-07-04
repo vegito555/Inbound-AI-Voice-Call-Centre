@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>OutboundAI — Dashboard</title>
+<title>InboundAI — Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -86,15 +86,15 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
 <body>
 
 <header>
-  <div><h1>📞 OutboundAI</h1><span class="sub">AI Voice Calling SaaS · Gemini Live · LiveKit · Vobiz</span></div>
+  <div><h1>📞 InboundAI</h1><span class="sub">AI Voice Calling SaaS · Gemini Live · LiveKit · Vobiz</span></div>
   <div><span class="chip" id="hdr-status">⏳ loading…</span></div>
 </header>
 
 <nav id="nav">
   <button data-tab="stats" class="active">📊 Stats</button>
-  <button data-tab="single">📞 Single Call</button>
-  <button data-tab="batch">📋 Batch</button>
-  <button data-tab="campaigns">🚀 Campaigns</button>
+  <button data-tab="single">📞 Inbound Test</button>
+  <button data-tab="batch" style="display:none">📋 Batch</button>
+  <button data-tab="campaigns" style="display:none">🚀 Campaigns</button>
   <button data-tab="agents">🤖 Agents</button>
   <button data-tab="prompt">✏️ AI Prompt</button>
   <button data-tab="appointments">📅 Appointments</button>
@@ -126,10 +126,21 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
   <div class="card"><h2>Avg Duration by Outcome (s)</h2><div class="chart-wrap"><canvas id="ch-duration"></canvas></div></div>
 </section>
 
-<!-- ==== SINGLE CALL ==== -->
+<!-- ==== SINGLE CALL (INBOUND TEST) ==== -->
 <section id="p-single" class="panel">
-  <div class="card">
-    <h2>📞 Place a Single Call</h2>
+  <div class="card" style="border-color:var(--accent2);background:linear-gradient(135deg,var(--card),rgba(0,204,255,.05))">
+    <h2>📞 Inbound Call Testing Guide</h2>
+    <p style="margin-bottom:12px">To test the voice AI agent:</p>
+    <ol style="padding-left:20px;margin-bottom:12px;line-height:1.8">
+      <li>Configure your LiveKit and Vobiz SIP credentials in the <strong>⚙️ Settings</strong> tab.</li>
+      <li>Create an inbound trunk and dispatch rule using the <strong>Create SIP Trunk</strong> button.</li>
+      <li>Dial your Vobiz inbound phone number from your phone.</li>
+      <li>The agent will answer automatically and speak to you!</li>
+    </ol>
+    <p class="muted">Note: Pre-registering your name and phone number below allows the agent to welcome you by name when you call.</p>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h2>👥 Lead Pre-Registration</h2>
     <form id="call-form">
       <div class="row">
         <div class="field"><label>Phone (E.164) *</label><input type="tel" id="f-phone" placeholder="+919876543210" required /></div>
@@ -139,10 +150,10 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
         <div class="field"><label>Business Name</label><input type="text" id="f-biz" value="our company" /></div>
         <div class="field"><label>Service Type</label><input type="text" id="f-srv" value="our service" /></div>
       </div>
-      <div class="field"><label>Agent Profile</label><select id="f-agent-profile"><option value="">— Use default / global prompt —</option></select></div>
-      <div class="field"><label><input type="checkbox" id="f-use-prompt" /> Use a custom system prompt for this call</label></div>
-      <div class="field" id="f-prompt-wrap" style="display:none"><label>Custom System Prompt</label><textarea id="f-prompt" rows="6" placeholder="Override the global prompt for this call only…"></textarea></div>
-      <button type="submit" class="btn">🚀 Dispatch Call</button>
+      <div class="field" style="display:none"><label>Agent Profile</label><select id="f-agent-profile"><option value="">— Use default / global prompt —</option></select></div>
+      <div class="field"><label><input type="checkbox" id="f-use-prompt" /> Pre-register with a custom system prompt override</label></div>
+      <div class="field" id="f-prompt-wrap" style="display:none"><label>Custom System Prompt</label><textarea id="f-prompt" rows="6" placeholder="Override the global prompt for this lead only…"></textarea></div>
+      <button type="submit" class="btn">💾 Pre-register Lead</button>
       <div class="err" id="f-err"></div>
     </form>
   </div>
@@ -358,13 +369,14 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
     </div>
     <div class="row">
       <div class="field eye"><label>VOBIZ_PASSWORD</label><input type="password" id="s-VOBIZ_PASSWORD" /><button type="button" class="toggle-eye" onclick="togglePw('s-VOBIZ_PASSWORD')">👁</button></div>
-      <div class="field"><label>VOBIZ_OUTBOUND_NUMBER</label><input type="text" id="s-VOBIZ_OUTBOUND_NUMBER" placeholder="+91…" /></div>
+      <div class="field"><label>VOBIZ_INBOUND_NUMBER / VOBIZ_OUTBOUND_NUMBER</label><input type="text" id="s-VOBIZ_OUTBOUND_NUMBER" placeholder="+91…" /></div>
     </div>
     <div class="row">
-      <div class="field"><label>OUTBOUND_TRUNK_ID (auto-filled after Create Trunk)</label><input type="text" id="s-OUTBOUND_TRUNK_ID" /></div>
+      <div class="field"><label>INBOUND_TRUNK_ID (auto-filled after Create Trunk)</label><input type="text" id="s-INBOUND_TRUNK_ID" /></div>
       <div class="field"><label>DEFAULT_TRANSFER_NUMBER</label><input type="text" id="s-DEFAULT_TRANSFER_NUMBER" placeholder="+91…" /></div>
     </div>
-    <button class="btn alt" onclick="createSIPTrunk()">⚡ Create SIP Trunk in LiveKit</button>
+    <div class="field" style="display:none"><label>OUTBOUND_TRUNK_ID</label><input type="text" id="s-OUTBOUND_TRUNK_ID" /></div>
+    <button class="btn alt" onclick="createSIPTrunk()">⚡ Create Inbound SIP Trunk & Rule</button>
   </div>
 
   <div class="card">
@@ -400,7 +412,7 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
 
   <div class="card">
     <h2>🛠 Tool Toggles</h2>
-    <p class="muted">Empty = all 9 tools enabled. Check items to restrict the agent to a subset.</p>
+    <p class="muted">Empty = all 10 tools enabled. Check items to restrict the agent to a subset.</p>
     <div class="checkbox-row" id="tools-toggles">
       <label><input type="checkbox" value="check_availability" /> check_availability</label>
       <label><input type="checkbox" value="book_appointment" /> book_appointment</label>
@@ -411,6 +423,7 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
       <label><input type="checkbox" value="remember_details" /> remember_details</label>
       <label><input type="checkbox" value="book_calcom" /> book_calcom</label>
       <label><input type="checkbox" value="cancel_calcom" /> cancel_calcom</label>
+      <label><input type="checkbox" value="save_lead_info" /> save_lead_info</label>
     </div>
     <button class="btn" onclick="saveToolToggles()" style="margin-top:10px">💾 Save Tools</button>
   </div>
@@ -438,10 +451,12 @@ hr{border:none;border-top:1px solid var(--border);margin:14px 0}
     <ol style="padding-left:20px;line-height:1.9">
       <li>Run <span class="code">supabase_schema.sql</span> in Supabase SQL Editor.</li>
       <li>Open <strong>⚙️ Settings</strong> → fill LiveKit, Gemini, and Vobiz credentials → Save.</li>
-      <li>Click <strong>⚡ Create SIP Trunk</strong> on the Vobiz card.</li>
+      <li>Click <strong>⚡ Create Inbound SIP Trunk & Rule</strong> on the Vobiz card.</li>
+      <li>Copy the returned Trunk ID into Coolify environment variables as <span class="code">INBOUND_TRUNK_ID</span> and redeploy.</li>
       <li>Open <strong>✏️ AI Prompt</strong> → tweak for your business → Save.</li>
       <li>(Optional) Open <strong>🤖 Agents</strong> → create at least one named agent profile.</li>
-      <li>Open <strong>📞 Single Call</strong> → call your own number to test.</li>
+      <li>Open <strong>📞 Inbound Test</strong> → pre-register your phone number and name.</li>
+      <li>Dial the inbound number from your phone to test the agent!</li>
     </ol>
   </div>
   <div class="card">
@@ -533,7 +548,7 @@ async function loadLiveConfig() {
   try {
     const s = await api('/api/settings');
     const wrap = $('live-config'); wrap.innerHTML = '';
-    const keys = ['LIVEKIT_URL','GEMINI_MODEL','GEMINI_TTS_VOICE','VOBIZ_SIP_DOMAIN','OUTBOUND_TRUNK_ID','USE_GEMINI_REALTIME'];
+    const keys = ['LIVEKIT_URL','GEMINI_MODEL','GEMINI_TTS_VOICE','VOBIZ_SIP_DOMAIN','INBOUND_TRUNK_ID','USE_GEMINI_REALTIME'];
     for (const k of keys) {
       const item = s[k] || {};
       const c = document.createElement('span');
@@ -559,7 +574,7 @@ $('call-form').addEventListener('submit', async ev => {
     agent_profile_id: $('f-agent-profile').value || null,
     system_prompt: $('f-use-prompt').checked ? ($('f-prompt').value || null) : null,
   };
-  try { const r = await apiPost('/api/call', body); toast('📞 Dispatched: ' + r.room); }
+  try { const r = await apiPost('/api/call', body); toast('✅ Lead Pre-registered: ' + r.lead_name); }
   catch (e) { showErr('f-err', e.message); toast(e.message, 'err'); }
 });
 
@@ -814,7 +829,7 @@ window.loadContactDetail = async (phone) => {
 };
 
 // ============= SETTINGS =============
-const SETTING_KEYS = ['LIVEKIT_URL','LIVEKIT_API_KEY','LIVEKIT_API_SECRET','GOOGLE_API_KEY','GEMINI_MODEL','GEMINI_TTS_VOICE','USE_GEMINI_REALTIME','VOBIZ_SIP_DOMAIN','VOBIZ_USERNAME','VOBIZ_PASSWORD','VOBIZ_OUTBOUND_NUMBER','OUTBOUND_TRUNK_ID','DEFAULT_TRANSFER_NUMBER','TWILIO_ACCOUNT_SID','TWILIO_AUTH_TOKEN','TWILIO_FROM_NUMBER','S3_ACCESS_KEY_ID','S3_SECRET_ACCESS_KEY','S3_ENDPOINT_URL','S3_REGION','S3_BUCKET','CALCOM_API_KEY','CALCOM_EVENT_TYPE_ID','CALCOM_TIMEZONE'];
+const SETTING_KEYS = ['LIVEKIT_URL','LIVEKIT_API_KEY','LIVEKIT_API_SECRET','GOOGLE_API_KEY','GEMINI_MODEL','GEMINI_TTS_VOICE','USE_GEMINI_REALTIME','VOBIZ_SIP_DOMAIN','VOBIZ_USERNAME','VOBIZ_PASSWORD','VOBIZ_OUTBOUND_NUMBER','OUTBOUND_TRUNK_ID','INBOUND_TRUNK_ID','DEFAULT_TRANSFER_NUMBER','TWILIO_ACCOUNT_SID','TWILIO_AUTH_TOKEN','TWILIO_FROM_NUMBER','S3_ACCESS_KEY_ID','S3_SECRET_ACCESS_KEY','S3_ENDPOINT_URL','S3_REGION','S3_BUCKET','CALCOM_API_KEY','CALCOM_EVENT_TYPE_ID','CALCOM_TIMEZONE'];
 async function loadSettings() {
   try {
     const s = await api('/api/settings');
@@ -843,12 +858,12 @@ async function loadSettings() {
   } catch (e) { toast(e.message,'err'); }
 }
 window.createSIPTrunk = async () => {
-  if (!confirm('Create a new SIP outbound trunk in LiveKit using the Vobiz env vars?')) return;
+  if (!confirm('Create a new SIP inbound trunk and dispatch rule in LiveKit using the Vobiz env vars?')) return;
   try {
     const r = await apiPost('/api/setup/trunk');
-    const msg = `⚡ Trunk created: ${r.trunk_id}\n\n${r.action_required||''}`;
+    const msg = `⚡ Inbound Trunk created: ${r.trunk_id}\nDispatch Rule created: ${r.dispatch_rule_id}\n\n${r.action_required||''}`;
     alert(msg);
-    toast('Trunk created — add OUTBOUND_TRUNK_ID to env vars and redeploy');
+    toast('Trunk created — add INBOUND_TRUNK_ID to env vars and redeploy');
   } catch (e) { toast(e.message,'err'); }
 };
 window.saveToolToggles = async () => {

@@ -24,11 +24,13 @@ DEFAULTS = {
     "VOBIZ_PASSWORD":          os.getenv("VOBIZ_PASSWORD", ""),
     "VOBIZ_OUTBOUND_NUMBER":   os.getenv("VOBIZ_OUTBOUND_NUMBER", ""),
     "OUTBOUND_TRUNK_ID":       os.getenv("OUTBOUND_TRUNK_ID", ""),
+    "INBOUND_TRUNK_ID":        os.getenv("INBOUND_TRUNK_ID", ""),
     "DEFAULT_TRANSFER_NUMBER": os.getenv("DEFAULT_TRANSFER_NUMBER", ""),
     "SUPABASE_URL":            os.getenv("SUPABASE_URL", ""),
     "SUPABASE_SERVICE_KEY":    os.getenv("SUPABASE_SERVICE_KEY", ""),
     "DEEPGRAM_API_KEY":        os.getenv("DEEPGRAM_API_KEY", ""),
 }
+
 
 
 def _default(key: str) -> str:
@@ -119,7 +121,7 @@ KNOWN_KEYS = [
     "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET",
     "GOOGLE_API_KEY", "GEMINI_MODEL", "GEMINI_TTS_VOICE", "USE_GEMINI_REALTIME",
     "VOBIZ_SIP_DOMAIN", "VOBIZ_USERNAME", "VOBIZ_PASSWORD",
-    "VOBIZ_OUTBOUND_NUMBER", "OUTBOUND_TRUNK_ID", "DEFAULT_TRANSFER_NUMBER",
+    "VOBIZ_OUTBOUND_NUMBER", "OUTBOUND_TRUNK_ID", "INBOUND_TRUNK_ID", "DEFAULT_TRANSFER_NUMBER",
     "DEEPGRAM_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER",
     "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY", "S3_ENDPOINT_URL", "S3_REGION", "S3_BUCKET",
     "CALCOM_API_KEY", "CALCOM_EVENT_TYPE_ID", "CALCOM_TIMEZONE",
@@ -136,6 +138,8 @@ async def get_all_settings() -> dict:
     out: dict = {}
     for k in KNOWN_KEYS:
         env_val = os.getenv(k, "")
+        if k == "INBOUND_TRUNK_ID" and not env_val:
+            env_val = os.getenv("OUTBOUND_TRUNK_ID", "")
         if k in SENSITIVE_KEYS:
             out[k] = {"value": "", "configured": bool(env_val), "source": "env", "editable": False}
         else:
@@ -185,7 +189,10 @@ async def get_setting(key: str, default: str = "") -> str:
       - For env-only keys: read os.environ only.
       - For DB-writable keys: env first (so VPS can still override), DB next.
     """
-    env_val = os.getenv(key, "")
+    if key == "INBOUND_TRUNK_ID":
+        env_val = os.getenv("INBOUND_TRUNK_ID") or os.getenv("OUTBOUND_TRUNK_ID", "")
+    else:
+        env_val = os.getenv(key, "")
     if env_val:
         return env_val
     if is_env_only(key):
@@ -357,6 +364,21 @@ async def get_calls_by_phone(phone: str) -> list:
     db = await _adb()
     result = await db.table("call_logs").select("*").eq("phone_number", phone).order("timestamp", desc=True).execute()
     return result.data or []
+
+
+async def get_lead_name_by_phone(phone: str) -> Optional[str]:
+    db = await _adb()
+    # Check call logs
+    result = await db.table("call_logs").select("lead_name").eq("phone_number", phone).order("timestamp", desc=True).limit(1).execute()
+    rows = result.data or []
+    if rows and rows[0].get("lead_name"):
+        return rows[0]["lead_name"]
+    # Check appointments
+    result = await db.table("appointments").select("name").eq("phone", phone).order("created_at", desc=True).limit(1).execute()
+    rows = result.data or []
+    if rows and rows[0].get("name"):
+        return rows[0]["name"]
+    return None
 
 
 async def update_call_notes(call_id: str, notes: str) -> bool:

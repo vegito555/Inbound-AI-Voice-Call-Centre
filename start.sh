@@ -14,22 +14,30 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "🚀 Starting OutboundAI (single source of truth: VPS env vars)"
+# Resolve TRUNK_ID from either INBOUND_TRUNK_ID or OUTBOUND_TRUNK_ID
+TRUNK_ID="${INBOUND_TRUNK_ID:-${OUTBOUND_TRUNK_ID:-}}"
+export INBOUND_TRUNK_ID="${TRUNK_ID}"
+export OUTBOUND_TRUNK_ID="${TRUNK_ID}"
+
+echo "🚀 Starting InboundAI (single source of truth: VPS env vars)"
 echo "   LIVEKIT_URL      = ${LIVEKIT_URL:-<missing>}"
 echo "   GEMINI_MODEL     = ${GEMINI_MODEL:-gemini-3.1-flash-live-preview}"
 echo "   GEMINI_TTS_VOICE = ${GEMINI_TTS_VOICE:-Aoede}"
 echo "   SUPABASE_URL     = ${SUPABASE_URL:-<missing>}"
-echo "   OUTBOUND_TRUNK_ID= ${OUTBOUND_TRUNK_ID:-<missing>}"
+echo "   INBOUND_TRUNK_ID = ${TRUNK_ID:-<missing>}"
 
 # Fail fast if the bare-minimum credentials are not present.
 require=( LIVEKIT_URL LIVEKIT_API_KEY LIVEKIT_API_SECRET GOOGLE_API_KEY \
-          SUPABASE_URL SUPABASE_SERVICE_KEY OUTBOUND_TRUNK_ID )
+          SUPABASE_URL SUPABASE_SERVICE_KEY )
 missing=()
 for v in "${require[@]}"; do
     if [ -z "${!v:-}" ]; then
         missing+=("$v")
     fi
 done
+if [ -z "${TRUNK_ID}" ]; then
+    missing+=("INBOUND_TRUNK_ID")
+fi
 if [ ${#missing[@]} -gt 0 ]; then
     echo "❌ Required environment variables missing: ${missing[*]}"
     echo "   Set them in your VPS / Coolify dashboard, then redeploy."

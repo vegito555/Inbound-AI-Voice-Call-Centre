@@ -30,7 +30,7 @@ from livekit import agents, api, rtc
 from livekit.agents import Agent, AgentSession, RoomInputOptions
 from livekit.plugins import noise_cancellation, silero
 
-from db import init_db, get_default_agent_profile
+from db import init_db, get_default_agent_profile, get_lead_name_by_phone
 from prompts import build_prompt
 from tools import AppointmentTools
 
@@ -156,7 +156,7 @@ def _greeting_ready_delay() -> float:
         return 0.1
 
 
-class OutboundAssistant(Agent):
+class InboundAssistant(Agent):
     def __init__(self, instructions: str) -> None:
         super().__init__(instructions=instructions, tools=[])
 
@@ -218,6 +218,43 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     logger.info("Connecting to room: %s", ctx.room.name)
     await ctx.connect()
 
+    # ── Resolve Caller Identity (Inbound) ────────────────────────────────────
+    phone_number = None
+    # Check if a participant with a sip_ prefix is already here
+    for p in ctx.room.remote_participants.values():
+        if p.identity.startswith("sip_"):
+            phone_number = p.identity.replace("sip_", "")
+            break
+
+    # If they aren't here yet, wait up to 5 seconds
+    if not phone_number:
+        try:
+            async def wait_for_any_participant():
+                while True:
+                    for p in ctx.room.remote_participants.values():
+                        if p.identity.startswith("sip_"):
+                            return p.identity.replace("sip_", "")
+                        elif p.identity:
+                            return p.identity
+                    await asyncio.sleep(0.1)
+            phone_number = await asyncio.wait_for(wait_for_any_participant(), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("No remote participant found in the room within 5 seconds.")
+
+    # Clean up phone number format if it has prefix
+    if phone_number and phone_number.startswith("sip_"):
+        phone_number = phone_number.replace("sip_", "")
+
+    lead_name = "there"
+    if phone_number:
+        try:
+            resolved_name = await get_lead_name_by_phone(phone_number)
+            if resolved_name:
+                lead_name = resolved_name
+                logger.info("Resolved caller name: %s", lead_name)
+        except Exception as exc:
+            logger.warning("Failed to lookup lead name by phone: %s", exc)
+
     # ── Parse metadata (job + room) ──────────────────────────────────────────
     config_dict: dict = {}
     try:
@@ -231,8 +268,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     except Exception:
         pass
 
-    phone_number: Optional[str] = config_dict.get("phone_number")
-    lead_name = config_dict.get("lead_name") or "there"
     business_name = config_dict.get("business_name") or "our company"
     service_type = config_dict.get("service_type") or "our service"
     custom_prompt = config_dict.get("system_prompt")
@@ -283,36 +318,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 
     tool_ctx = AppointmentTools(ctx, phone_number=phone_number, lead_name=lead_name)
 
-    # ── DIAL FIRST (Rule 1) ──────────────────────────────────────────────────
-    if phone_number:
-        # If the SIP participant is already in the room (e.g. inbound), skip dial.
-        already_here = any(
-            "sip_" in p.identity for p in ctx.room.remote_participants.values()
-        )
-        if not already_here:
-            trunk_id = os.getenv("OUTBOUND_TRUNK_ID", "")
-            if not trunk_id:
-                await _safe_log("error", "OUTBOUND_TRUNK_ID not set — cannot dial")
-                ctx.shutdown()
-                return
-            await _safe_log("info", f"Dialing {phone_number} via trunk {trunk_id}")
-            try:
-                await ctx.api.sip.create_sip_participant(
-                    api.CreateSIPParticipantRequest(
-                        room_name=ctx.room.name,
-                        sip_trunk_id=trunk_id,
-                        sip_call_to=phone_number,
-                        participant_identity=f"sip_{phone_number}",
-                        wait_until_answered=True,
-                    )
-                )
-            except Exception as exc:
-                hint = _trunk_id_hint(trunk_id)
-                await _safe_log("error", f"SIP dial failed for {phone_number}: {exc}{hint}")
-                ctx.shutdown()
-                return
-            await _safe_log("info", f"Call ANSWERED — {phone_number}, starting AI session")
-
     # ── Play WAV in background while building/starting the session ──────────
     wav_path = os.path.join(os.path.dirname(__file__), "Greeting.wav")
     play_task = asyncio.create_task(_play_wav_file(ctx, wav_path))
@@ -339,7 +344,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         from livekit.agents import RoomOptions as _RO
         session_kwargs = dict(
             room=ctx.room,
-            agent=OutboundAssistant(instructions=system_prompt),
+            agent=InboundAssistant(instructions=system_prompt),
             room_options=_RO(
                 input_options=RoomInputOptions(
                     noise_cancellation=noise_cancellation.BVCTelephony()
@@ -349,7 +354,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     else:
         session_kwargs = dict(
             room=ctx.room,
-            agent=OutboundAssistant(instructions=system_prompt),
+            agent=InboundAssistant(instructions=system_prompt),
             room_input_options=RoomInputOptions(
                 noise_cancellation=noise_cancellation.BVCTelephony()
             ),
@@ -369,10 +374,10 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         greeting_delay = _greeting_ready_delay()
         if greeting_delay > 0:
             await asyncio.sleep(greeting_delay)
-        if phone_number:
-            greeting_text = f"Hi, am I speaking with {lead_name}?"
+        if phone_number and lead_name != "there":
+            greeting_text = f"Namaste {lead_name}! Welcome to TextileProjects.in, India's dedicated Textile Knowledge Repository. I am your AI Investment Assistant. Would you prefer to speak in Hindi or English?"
         else:
-            greeting_text = "Hi, this is Priya from TBD Campus. How can I help?"
+            greeting_text = "Namaste! Welcome to TextileProjects.in, India's dedicated Textile Knowledge Repository. I am your AI Investment Assistant. Would you prefer to speak in Hindi or English?"
 
         greeting_fired = False
         try:
@@ -392,7 +397,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             try:
                 await session.generate_reply(
                     user_input=(
-                        "[SYSTEM: outbound call just connected and the lead has picked up]"
+                        "[SYSTEM: inbound call just connected and caller is online]"
                     ),
                     instructions=(
                         f"You must speak FIRST. Say exactly: \"{greeting_text}\""
@@ -437,13 +442,13 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             except Exception as exc:
                 await _safe_log("warning", f"Recording start failed (non-fatal): {exc}")
 
-    # ── Keep alive until SIP participant disconnects ─────────────────────────
+    # ── Keep alive until caller disconnects ──────────────────────────────────
     if phone_number:
         sip_identity = f"sip_{phone_number}"
         disconnect_event = asyncio.Event()
 
         def _on_participant_disconnected(participant: rtc.RemoteParticipant):
-            if participant.identity == sip_identity:
+            if participant.identity == sip_identity or participant.identity == phone_number:
                 disconnect_event.set()
 
         def _on_disconnected(*_args, **_kwargs):
@@ -457,7 +462,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         except asyncio.TimeoutError:
             await _safe_log("warning", "Call hit 1-hour safety timeout — shutting down")
 
-        await _safe_log("info", f"SIP participant disconnected — ending session for {phone_number}")
+        await _safe_log("info", f"Caller disconnected — ending session for {phone_number}")
         try:
             await session.aclose()
         except Exception:
@@ -474,5 +479,5 @@ async def entrypoint(ctx: agents.JobContext) -> None:
 if __name__ == "__main__":
     init_db()
     agents.cli.run_app(
-        agents.WorkerOptions(entrypoint_fnc=entrypoint, agent_name="outbound-caller")
+        agents.WorkerOptions(entrypoint_fnc=entrypoint, agent_name="inbound-caller")
     )

@@ -174,68 +174,28 @@ async def healthz():
 
 @app.post("/api/call")
 async def api_dispatch_call(req: CallRequest):
-    url = eff("LIVEKIT_URL")
-    key = eff("LIVEKIT_API_KEY")
-    secret = eff("LIVEKIT_API_SECRET")
-
-    if not all([url, key, secret]):
-        raise HTTPException(400, "LiveKit credentials not configured. Go to Settings → LiveKit.")
-
     phone = req.phone.strip()
     if not phone.startswith("+"):
         raise HTTPException(400, "Phone must be in E.164 format: +919876543210")
 
-    effective_prompt = req.system_prompt
-    effective_voice = effective_model = effective_tools = None
-
-    if req.agent_profile_id:
-        profile = await get_agent_profile(req.agent_profile_id)
-        if profile:
-            if not effective_prompt and profile.get("system_prompt"):
-                effective_prompt = profile["system_prompt"]
-            effective_voice = profile.get("voice")
-            effective_model = profile.get("model")
-            effective_tools = profile.get("enabled_tools")
-
-    if not effective_prompt:
-        effective_prompt = await get_setting("system_prompt", "") or None
-
-    room_name = f"call-{phone.replace('+', '')}-{random.randint(1000, 9999)}"
-    metadata: dict = {
-        "phone_number": phone,
-        "lead_name": req.lead_name,
-        "business_name": req.business_name,
-        "service_type": req.service_type,
-        "system_prompt": effective_prompt,
-    }
-    if effective_voice:
-        metadata["voice_override"] = effective_voice
-    if effective_model:
-        metadata["model_override"] = effective_model
-    if effective_tools:
-        metadata["tools_override"] = effective_tools
-
     try:
-        from livekit import api as lk_api
-        session = _lk_session()
-        lk = lk_api.LiveKitAPI(url=url, api_key=key, api_secret=secret, session=session)
-        await lk.room.create_room(
-            lk_api.CreateRoomRequest(name=room_name, empty_timeout=300, max_participants=5)
+        from db import log_call
+        notes = f"Business: {req.business_name} | Service: {req.service_type}"
+        if req.system_prompt:
+            notes += f" | Prompt Override: {req.system_prompt}"
+        
+        await log_call(
+            phone_number=phone,
+            lead_name=req.lead_name,
+            outcome="pre_registered",
+            reason="Pre-registered from InboundAI Dashboard",
+            duration_seconds=0,
+            notes=notes,
         )
-        await lk.agent_dispatch.create_dispatch(
-            lk_api.CreateAgentDispatchRequest(
-                agent_name="outbound-caller",
-                room=room_name,
-                metadata=json.dumps(metadata),
-            )
-        )
-        await lk.aclose()
-        await session.close()
-        await log_error("server", f"Call dispatched to {phone}", f"room={room_name}", "info")
-        return {"status": "dispatched", "room": room_name, "phone": phone}
+        return {"status": "pre_registered", "phone": phone, "lead_name": req.lead_name}
     except Exception as exc:
-        logger.error("Dispatch error: %s", exc)
-        raise HTTPException(500, f"Dispatch failed: {exc}")
+        logger.error("Pre-registration error: %s", exc)
+        raise HTTPException(500, f"Pre-registration failed: {exc}")
 
 
 # ── Calls / Stats ─────────────────────────────────────────────────────────────
@@ -333,7 +293,7 @@ async def api_setup_trunk():
     sip_domain = eff("VOBIZ_SIP_DOMAIN")
     username = eff("VOBIZ_USERNAME")
     password = eff("VOBIZ_PASSWORD")
-    phone = eff("VOBIZ_OUTBOUND_NUMBER")
+    phone = eff("VOBIZ_INBOUND_NUMBER") or eff("VOBIZ_OUTBOUND_NUMBER")
 
     if not all([url, key, secret, sip_domain, username, password, phone]):
         raise HTTPException(400, "Configure LiveKit and Vobiz credentials in Settings first.")
@@ -342,36 +302,54 @@ async def api_setup_trunk():
         from livekit import api as lk_api
         session = _lk_session()
         lk = lk_api.LiveKitAPI(url=url, api_key=key, api_secret=secret, session=session)
-        trunk = await lk.sip.create_sip_outbound_trunk(
-            lk_api.CreateSIPOutboundTrunkRequest(
-                trunk=lk_api.SIPOutboundTrunkInfo(
-                    name="Vobiz Outbound Trunk",
-                    address=sip_domain,
+        
+        # 1. Create the Inbound SIP Trunk
+        trunk = await lk.sip.create_sip_inbound_trunk(
+            lk_api.CreateSIPInboundTrunkRequest(
+                trunk=lk_api.SIPInboundTrunkInfo(
+                    name="Vobiz Inbound Trunk",
+                    numbers=[phone],
                     auth_username=username,
                     auth_password=password,
-                    numbers=[phone],
                 )
             )
         )
         trunk_id = trunk.sip_trunk_id
+        
+        # 2. Create a SIP Dispatch Rule to route calls to a room and auto-dispatch the agent
+        rule = lk_api.SIPDispatchRule(
+            dispatch_rule_individual=lk_api.SIPDispatchRuleIndividual(
+                room_prefix="inbound-",
+            )
+        )
+        dispatch_rule = await lk.sip.create_sip_dispatch_rule(
+            lk_api.CreateSIPDispatchRuleRequest(
+                name="Inbound Dispatch Rule",
+                trunk_ids=[trunk_id],
+                rule=rule,
+                room_config=lk_api.RoomConfiguration(
+                    agents=[lk_api.RoomAgentDispatch(agent_name="inbound-caller")]
+                )
+            )
+        )
+        dispatch_rule_id = dispatch_rule.sip_dispatch_rule_id
+        
         await lk.aclose()
         await session.close()
-        # NOTE: We do NOT persist the trunk_id anywhere automatically. The
-        # operator must add OUTBOUND_TRUNK_ID=<trunk_id> to the VPS env vars
-        # and redeploy so the worker picks it up. This keeps env vars the
-        # single source of truth.
+        
         return {
             "status": "created",
             "trunk_id": trunk_id,
+            "dispatch_rule_id": dispatch_rule_id,
             "action_required": (
-                f"Add OUTBOUND_TRUNK_ID={trunk_id} to your VPS / Coolify "
+                f"Add INBOUND_TRUNK_ID={trunk_id} to your VPS / Coolify "
                 f"environment variables and redeploy the container."
             ),
         }
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(500, f"Trunk creation failed: {exc}")
+        raise HTTPException(500, f"Inbound Trunk and Dispatch Rule creation failed: {exc}")
 
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
@@ -505,7 +483,7 @@ async def _dispatch_one(
 
         await lk.agent_dispatch.create_dispatch(
             lk_api.CreateAgentDispatchRequest(
-                agent_name="outbound-caller",
+                agent_name="inbound-caller",
                 room=room_name,
                 metadata=json.dumps(metadata),
             )
@@ -599,30 +577,12 @@ def _schedule_campaign(campaign_id: str, schedule_type: str, schedule_time: str)
 
 @app.post("/api/campaigns")
 async def api_create_campaign(req: CampaignRequest):
-    if not req.contacts:
-        raise HTTPException(400, "contacts list cannot be empty")
-    if req.schedule_type not in ("once", "daily", "weekdays"):
-        raise HTTPException(400, "schedule_type must be: once | daily | weekdays")
-
-    campaign_id = await create_campaign(
-        name=req.name, contacts_json=json.dumps(req.contacts),
-        schedule_type=req.schedule_type, schedule_time=req.schedule_time,
-        call_delay_seconds=req.call_delay_seconds,
-        system_prompt=req.system_prompt, agent_profile_id=req.agent_profile_id,
-    )
-    campaign = await get_campaign(campaign_id)
-
-    if req.schedule_type == "once":
-        asyncio.create_task(_run_campaign(campaign_id))
-    else:
-        _schedule_campaign(campaign_id, req.schedule_type, req.schedule_time)
-
-    return {"status": "created", "campaign_id": campaign_id, "campaign": campaign}
+    raise HTTPException(400, "Campaigns are disabled for Inbound voice calling.")
 
 
 @app.get("/api/campaigns")
 async def api_list_campaigns():
-    return await get_all_campaigns()
+    return []
 
 
 @app.delete("/api/campaigns/{campaign_id}")
@@ -638,11 +598,7 @@ async def api_delete_campaign(campaign_id: str):
 
 @app.post("/api/campaigns/{campaign_id}/run")
 async def api_run_campaign_now(campaign_id: str):
-    campaign = await get_campaign(campaign_id)
-    if not campaign:
-        raise HTTPException(404, "Campaign not found")
-    asyncio.create_task(_run_campaign(campaign_id))
-    return {"status": "dispatching", "campaign_id": campaign_id}
+    raise HTTPException(400, "Outbound campaign execution is not supported for Inbound voice calling.")
 
 
 @app.patch("/api/campaigns/{campaign_id}/status")

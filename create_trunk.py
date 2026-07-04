@@ -2,12 +2,11 @@ import asyncio
 import os
 import certifi
 
-# Fix SSL on macOS
+# Fix for SSL
 os.environ['SSL_CERT_FILE'] = certifi.where()
 
 from dotenv import load_dotenv
 from livekit import api
-from livekit.protocol.sip import CreateSIPOutboundTrunkRequest, SIPOutboundTrunkInfo
 
 load_dotenv(".env")
 
@@ -21,40 +20,60 @@ async def main():
     sip_address = os.getenv("VOBIZ_SIP_DOMAIN")
     username = os.getenv("VOBIZ_USERNAME")
     password = os.getenv("VOBIZ_PASSWORD")
-    number = os.getenv("VOBIZ_OUTBOUND_NUMBER")
+    number = os.getenv("VOBIZ_INBOUND_NUMBER") or os.getenv("VOBIZ_OUTBOUND_NUMBER")
 
     if not (url and key and secret):
         print("Error: Missing LiveKit credentials")
         return
 
-    if not (sip_address and username and password):
-        print("Error: Missing SIP credentials (VOBIZ_SIP_DOMAIN, VOBIZ_USERNAME, VOBIZ_PASSWORD)")
+    if not (sip_address and username and password and number):
+        print("Error: Missing SIP credentials (VOBIZ_SIP_DOMAIN, VOBIZ_USERNAME, VOBIZ_PASSWORD, number)")
         return
 
     lkapi = api.LiveKitAPI(url=url, api_key=key, api_secret=secret)
 
     try:
-        print(f"Creating SIP Trunk for {sip_address}...")
+        print(f"Creating SIP Inbound Trunk for {number}...")
         
-        trunk_info = SIPOutboundTrunkInfo(
-            name="Vobiz Trunk",
-            address=sip_address,
+        trunk_info = api.SIPInboundTrunkInfo(
+            name="Vobiz Inbound Trunk",
+            numbers=[number],
             auth_username=username,
             auth_password=password,
-            numbers=[number] if number else [],
         )
 
-        request = CreateSIPOutboundTrunkRequest(trunk=trunk_info)
+        request = api.CreateSIPInboundTrunkRequest(trunk=trunk_info)
+        trunk = await lkapi.sip.create_sip_inbound_trunk(request)
+        trunk_id = trunk.sip_trunk_id
         
-        trunk = await lkapi.sip.create_outbound_trunk(request)
+        print("\n✅ SIP Inbound Trunk Created Successfully!")
+        print(f"Trunk ID: {trunk_id}")
         
-        print("\n✅ SIP Trunk Created Successfully!")
-        print(f"Trunk ID: {trunk.sip_trunk_id}")
-        print(f"Name: {trunk.name}")
-        print(f"Numbers: {trunk.numbers}")
+        print("\nCreating Inbound SIP Dispatch Rule...")
+        rule = api.SIPDispatchRule(
+            dispatch_rule_individual=api.SIPDispatchRuleIndividual(
+                room_prefix="inbound-",
+            )
+        )
+        dispatch_rule_req = api.CreateSIPDispatchRuleRequest(
+            name="Inbound Dispatch Rule",
+            trunk_ids=[trunk_id],
+            rule=rule,
+            room_config=api.RoomConfiguration(
+                agents=[api.RoomAgentDispatch(agent_name="inbound-caller")]
+            )
+        )
+        dispatch_rule = await lkapi.sip.create_sip_dispatch_rule(dispatch_rule_req)
+        
+        print("\n✅ SIP Dispatch Rule Created Successfully!")
+        print(f"Rule ID: {dispatch_rule.sip_dispatch_rule_id}")
+        print(f"Rule Name: {dispatch_rule.name}")
+        print(f"Trunk IDs: {dispatch_rule.trunk_ids}")
+        print("-" * 40)
+        print("Please save the Trunk ID in your environment variables as INBOUND_TRUNK_ID.")
         
     except Exception as e:
-        print(f"\n❌ Error creating trunk: {e}")
+        print(f"\n❌ Error creating trunk/rule: {e}")
     finally:
         await lkapi.aclose()
 

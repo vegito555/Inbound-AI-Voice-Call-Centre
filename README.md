@@ -50,54 +50,6 @@ ui/index.html             Single-file dashboard
 
 ---
 
-## Required VPS environment variables
-
-Set every one of these in Coolify (or your VPS env). Lower group is optional.
-
-```bash
-# LiveKit Cloud (cloud.livekit.io)
-LIVEKIT_URL=wss://your-project.livekit.cloud
-LIVEKIT_API_KEY=APIxxxxxxxxxxxxxxxxx
-LIVEKIT_API_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# Google Gemini (aistudio.google.com/app/apikey)
-GOOGLE_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-GEMINI_MODEL=gemini-3.1-flash-live-preview
-GEMINI_TTS_VOICE=Aoede
-USE_GEMINI_REALTIME=true
-GREETING_READY_DELAY_SECONDS=0.1    # optional; lower first-greeting pause, set 0 to disable
-
-# Vobiz SIP
-VOBIZ_SIP_DOMAIN=xxxxxxxx.sip.vobiz.ai
-VOBIZ_USERNAME=your_username
-VOBIZ_PASSWORD=your_password
-VOBIZ_OUTBOUND_NUMBER=+919876543210
-OUTBOUND_TRUNK_ID=ST_xxxxxxxxxxxxxxxx        # filled after Create SIP Trunk
-DEFAULT_TRANSFER_NUMBER=+919876543210
-
-# Supabase (Project Settings → API)
-SUPABASE_URL=https://xxxxxxxxxxxxxxxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-
-# ── Optional ──
-TWILIO_ACCOUNT_SID=
-TWILIO_AUTH_TOKEN=
-TWILIO_FROM_NUMBER=
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
-S3_ENDPOINT_URL=
-S3_REGION=ap-northeast-1
-S3_BUCKET=call-recordings
-CALCOM_API_KEY=
-CALCOM_EVENT_TYPE_ID=
-CALCOM_TIMEZONE=Asia/Kolkata
-DEEPGRAM_API_KEY=        # only for the pipeline fallback
-```
-
-If any of `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `GOOGLE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` are missing, `start.sh` aborts with a clear message before launching anything.
-
----
-
 ## VPS deployment via Coolify
 
 1. **Supabase** → SQL Editor → run `supabase_schema.sql`.

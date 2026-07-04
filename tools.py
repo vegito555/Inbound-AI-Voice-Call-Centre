@@ -1,8 +1,10 @@
 """LLM function tools available to the OutboundAI voice agent."""
 
 import asyncio
+import csv
 import logging
 import os
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -19,6 +21,53 @@ from db import (
 )
 
 logger = logging.getLogger("appointment-tools")
+
+# ── Lead CSV capture ─────────────────────────────────────────────────────────
+LEAD_CSV_PATH = os.getenv(
+    "LEAD_CSV_PATH", os.path.join(os.path.dirname(__file__), "leads.csv")
+)
+LEAD_CSV_FIELDS = [
+    "call_id",
+    "timestamp",
+    "phone_number",
+    "name",
+    "qualification_choice",
+    "scenario_reply",
+    "investment_budget",
+    "product_interest",
+    "expected_investment",
+    "project_timeline",
+    "consultation_reply",
+    "consultation_time",
+    "mobile_number",
+    "email",
+    "notes",
+]
+_lead_csv_lock = threading.Lock()
+
+
+def _upsert_lead_row(row: dict) -> None:
+    """Insert or update (by call_id) a single lead row in the CSV file."""
+    with _lead_csv_lock:
+        parent_dir = os.path.dirname(LEAD_CSV_PATH)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        rows = []
+        if os.path.exists(LEAD_CSV_PATH):
+            with open(LEAD_CSV_PATH, "r", newline="", encoding="utf-8") as f:
+                rows = list(csv.DictReader(f))
+        updated = False
+        for existing in rows:
+            if existing.get("call_id") == row.get("call_id"):
+                existing.update({k: v for k, v in row.items() if v})
+                updated = True
+                break
+        if not updated:
+            rows.append(row)
+        with open(LEAD_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=LEAD_CSV_FIELDS, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
 
 
 async def _log(msg: str, detail: str = "", level: str = "info") -> None:
@@ -43,6 +92,12 @@ class AppointmentTools(llm.ToolContext):
         self._call_start_time = time.time()
         self._sip_domain = os.getenv("VOBIZ_SIP_DOMAIN", "")
         self.recording_url: Optional[str] = None
+        self._lead_data: dict = {
+            "call_id": getattr(getattr(ctx, "room", None), "name", "") or f"call_{int(time.time())}",
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "phone_number": phone_number or "",
+            "name": lead_name if lead_name and lead_name != "there" else "",
+        }
         super().__init__(tools=[])
 
     def build_tool_list(self, enabled: list) -> list:
@@ -51,11 +106,41 @@ class AppointmentTools(llm.ToolContext):
             self.check_availability, self.book_appointment, self.end_call,
             self.transfer_to_human, self.send_sms_confirmation, self.lookup_contact,
             self.remember_details, self.book_calcom, self.cancel_calcom,
+            self.save_lead_info,
         ]
         if not enabled:
             return all_methods
         name_map = {m.__name__: m for m in all_methods}
         return [name_map[n] for n in enabled if n in name_map]
+
+    @llm.function_tool
+    async def save_lead_info(self, field: str, value: str) -> str:
+        """
+        Save one piece of caller information to the lead CSV file. Call this
+        IMMEDIATELY every time the caller answers a question.
+        field must be one of: name | qualification_choice | scenario_reply |
+        investment_budget | product_interest | expected_investment |
+        project_timeline | consultation_reply | consultation_time |
+        mobile_number | email | notes.
+        value: the caller's answer, verbatim or lightly cleaned.
+        """
+        field = (field or "").strip().lower()
+        if field not in LEAD_CSV_FIELDS or field in ("call_id", "timestamp", "phone_number"):
+            return (
+                "Invalid field. Use one of: name, qualification_choice, "
+                "scenario_reply, investment_budget, product_interest, "
+                "expected_investment, project_timeline, consultation_reply, "
+                "consultation_time, mobile_number, email, notes."
+            )
+        self._lead_data[field] = (value or "").strip()
+        try:
+            row = {k: self._lead_data.get(k, "") for k in LEAD_CSV_FIELDS}
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _upsert_lead_row, row)
+            return f"Saved {field}."
+        except Exception as exc:
+            logger.error("save_lead_info failed: %s", exc)
+            return "Could not save right now, but continue the conversation."
 
     @llm.function_tool
     async def check_availability(self, date: str, time: str) -> str:

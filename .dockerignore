@@ -1,6 +1,7 @@
 .env
 .env.*
 *.env
+leads.csv
 .git
 .gitignore
 .github/
